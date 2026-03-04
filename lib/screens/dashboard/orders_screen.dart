@@ -47,11 +47,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _buildTabs(),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('orders')
-                  .where('vendorId', isEqualTo: user.uid)
-                  .orderBy('createdAt', descending: true)
-                  .snapshots(),
+              stream: showActive 
+                ? FirebaseFirestore.instance
+                    .collection('orders')
+                    .where('vendorId', isEqualTo: user.uid)
+                    .where('status', whereIn: ['received', 'paid', 'accepted', 'preparing', 'ready'])
+                    .orderBy('createdAt', descending: true)
+                    .snapshots()
+                : FirebaseFirestore.instance
+                    .collection('orders')
+                    .where('vendorId', isEqualTo: user.uid)
+                    .where('status', whereIn: ['COMPLETED', 'REJECTED'])
+                    .orderBy('createdAt', descending: true)
+                    .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -61,22 +69,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   return _buildEmptyState();
                 }
 
-                var docs = snapshot.data!.docs;
-                if (showActive) {
-                  // Active: paid, accepted, preparing, ready
-                  docs = docs.where((doc) {
-                    final status = (doc.data() as Map)['status'];
-                    return status != 'COMPLETED' && status != 'REJECTED' && status != 'payment_pending';
-                  }).toList();
-                } else {
-                  // History: completed, rejected
-                  docs = docs.where((doc) {
-                    final status = (doc.data() as Map)['status'];
-                    return status == 'COMPLETED' || status == 'REJECTED';
-                  }).toList();
-                }
-
-                if (docs.isEmpty) return _buildEmptyState();
+                final docs = snapshot.data!.docs;
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(20),
@@ -169,10 +162,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ? DateFormat('hh:mm a').format((data['createdAt'] as Timestamp).toDate())
         : "--:--";
     
+    // 🔥 Check for Reminders
+    final bool isReminded = data['remindVendor'] ?? false;
+
     Color statusColor = Colors.blue;
     String statusLabel = status;
     
-    if (status == "paid") {
+    if (status == "received") {
+      statusColor = Colors.blue;
+      statusLabel = "NEW ORDER";
+    } else if (status == "paid") {
       statusColor = Colors.amber;
       statusLabel = "PAID (WAITING)";
     } else if (status == "accepted") {
@@ -196,11 +195,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
       decoration: BoxDecoration(
         color: cardBg,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        border: Border.all(color: isReminded ? Colors.redAccent.withOpacity(0.5) : Colors.white.withOpacity(0.05), width: isReminded ? 2 : 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (isReminded)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.notifications_active, color: Colors.redAccent, size: 16),
+                  const SizedBox(width: 8),
+                  const Text("CUSTOMER REMINDED YOU", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 10)),
+                ],
+              ),
+            ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -233,7 +243,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text("${item['quantity']}x ${item['name']}", style: const TextStyle(color: Colors.white60)),
+                // 🔥 FIXED: Handled field mismatch (quantity)
+                Text("${item['quantity'] ?? item['qty']}x ${item['name']}", style: const TextStyle(color: Colors.white70)),
                 Text("₹${item['price']}", style: const TextStyle(color: Colors.white60)),
               ],
             ),
@@ -254,7 +265,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   Widget _buildActionButtons(String docId, String status, Map<String, dynamic> data) {
-    if (status == "paid") {
+    if (status == "received" || status == "paid") {
       return Row(
         children: [
           Expanded(
@@ -348,7 +359,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
           'status': 'accepted',
           'tokenNumber': newToken,
           'acceptedAt': FieldValue.serverTimestamp(),
-          'estimatedTime': 15, // Mock estimated time
+          'estimatedTime': 15,
+          'remindVendor': false, // 🔥 Reset reminder when accepted
         });
       });
     } catch (e) {
@@ -361,6 +373,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   void _updateStatus(String docId, String status) async {
-    await FirebaseFirestore.instance.collection('orders').doc(docId).update({'status': status});
+    await FirebaseFirestore.instance.collection('orders').doc(docId).update({
+      'status': status,
+      'remindVendor': false, // 🔥 Reset reminder on any update
+    });
   }
 }

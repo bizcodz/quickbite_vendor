@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 enum CustomerStage { menu, checkout, tracking }
 
@@ -16,17 +17,43 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
   final Color darkBg = const Color(0xFF0F172A);
 
   CustomerStage stage = CustomerStage.menu;
-  Map<String, Map<String, dynamic>> cart = {}; // itemId: {qty, name, price}
+  Map<String, Map<String, dynamic>> cart = {}; // itemId: {quantity, name, price}
   String? activeOrderId;
   String selectedPaymentMethod = "UPI";
+  String selectedCategory = "All Items";
   final TextEditingController nameController = TextEditingController();
+
+  bool canRemind = true;
+  int remindSeconds = 0;
+  Timer? _timer;
 
   double get totalAmount {
     double total = 0;
     cart.forEach((key, value) {
-      total += (value['price'] * value['qty']);
+      total += (value['price'] * value['quantity']);
     });
     return total;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startRemindTimer() {
+    setState(() {
+      canRemind = false;
+      remindSeconds = 120; // 2 minutes buffer
+    });
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (remindSeconds == 0) {
+        setState(() => canRemind = true);
+        timer.cancel();
+      } else {
+        setState(() => remindSeconds--);
+      }
+    });
   }
 
   @override
@@ -66,12 +93,23 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
           stream: FirebaseFirestore.instance.collection('menu').where('vendorId', isEqualTo: widget.vendorId).snapshots(),
           builder: (context, menuSnap) {
             if (!vendorSnap.hasData || !menuSnap.hasData) {
-              return const Center(child: CircularProgressIndicator(color: Color(0xFFE67E22)));
+              return Center(child: CircularProgressIndicator(color: accentOrange));
             }
 
             final vendorData = vendorSnap.data!.data() as Map<String, dynamic>?;
             final stallName = vendorData?['stallName'] ?? "StreetSync Stall";
-            final items = menuSnap.data!.docs;
+            final allDocs = menuSnap.data!.docs;
+
+            List<String> categories = ["All Items"];
+            for (var doc in allDocs) {
+              final cat = (doc.data() as Map<String, dynamic>)['category'] as String?;
+              if (cat != null && !categories.contains(cat)) categories.add(cat);
+            }
+
+            var filteredDocs = allDocs;
+            if (selectedCategory != "All Items") {
+              filteredDocs = allDocs.where((doc) => (doc.data() as Map<String, dynamic>)['category'] == selectedCategory).toList();
+            }
 
             return Stack(
               children: [
@@ -128,7 +166,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
                             SingleChildScrollView(
                               scrollDirection: Axis.horizontal,
                               child: Row(
-                                children: ["All Items", "Dosas", "Idlis", "Drinks"].map((cat) => _buildCategoryChip(cat, cat == "All Items")).toList(),
+                                children: categories.map((cat) => _buildCategoryChip(cat)).toList(),
                               ),
                             ),
                           ],
@@ -140,11 +178,11 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
                       sliver: SliverList(
                         delegate: SliverChildBuilderDelegate(
                               (context, index) {
-                            final doc = items[index];
+                            final doc = filteredDocs[index];
                             final data = doc.data() as Map<String, dynamic>;
                             return _buildMenuItem(doc.id, data);
                           },
-                          childCount: items.length,
+                          childCount: filteredDocs.length,
                         ),
                       ),
                     ),
@@ -182,21 +220,25 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
     );
   }
 
-  Widget _buildCategoryChip(String label, bool isSelected) {
-    return Container(
-      margin: const EdgeInsets.only(right: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: BoxDecoration(
-        color: isSelected ? accentOrange : const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(24),
+  Widget _buildCategoryChip(String label) {
+    bool isSelected = selectedCategory == label;
+    return GestureDetector(
+      onTap: () => setState(() => selectedCategory = label),
+      child: Container(
+        margin: const EdgeInsets.only(right: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? accentOrange : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.black54, fontWeight: FontWeight.bold, fontSize: 13)),
       ),
-      child: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.black54, fontWeight: FontWeight.bold, fontSize: 13)),
     );
   }
 
   Widget _buildMenuItem(String id, Map<String, dynamic> data) {
     final bool inStock = data['inStock'] ?? true;
-    final int qty = cart[id]?['qty'] ?? 0;
+    final int qty = cart[id]?['quantity'] ?? 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -224,7 +266,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
           if (inStock)
             qty == 0
                 ? InkWell(
-              onTap: () => setState(() => cart[id] = {'qty': 1, 'name': data['name'], 'price': data['price']}),
+              onTap: () => setState(() => cart[id] = {'quantity': 1, 'name': data['name'], 'price': data['price']}),
               child: Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: accentOrange.withOpacity(0.3))),
@@ -234,11 +276,11 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
                 : Row(
               children: [
                 IconButton(icon: Icon(Icons.remove_circle_outline, color: Colors.grey[400], size: 24), onPressed: () => setState(() {
-                  if (cart[id]!['qty'] > 1) cart[id]!['qty']--;
+                  if (cart[id]!['quantity'] > 1) cart[id]!['quantity']--;
                   else cart.remove(id);
                 })),
                 Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                IconButton(icon: Icon(Icons.add_circle, color: accentOrange, size: 24), onPressed: () => setState(() => cart[id]!['qty']++)),
+                IconButton(icon: Icon(Icons.add_circle, color: accentOrange, size: 24), onPressed: () => setState(() => cart[id]!['quantity']++)),
               ],
             )
           else
@@ -269,10 +311,10 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
               padding: const EdgeInsets.only(bottom: 16),
               child: Row(
                 children: [
-                  Text("${item['qty']}x", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
+                  Text("${item['quantity']}x", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
                   const SizedBox(width: 12),
                   Expanded(child: Text(item['name'], style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15))),
-                  Text("₹${item['price'] * item['qty']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text("₹${item['price'] * item['quantity']}", style: const TextStyle(fontWeight: FontWeight.bold)),
                 ],
               ),
             )),
@@ -354,6 +396,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
 
         final String status = data['status'] ?? "received";
         final token = data['tokenNumber'] ?? "--";
+        final List items = (data['items'] as List?) ?? [];
 
         return Container(
           color: darkBg,
@@ -362,16 +405,23 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.all(20),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(30)),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.check_circle, color: Color(0xFF22C55E), size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text("Order status updated: ${status.toUpperCase()}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13))),
-                      ],
-                    ),
+                  child: Row(
+                    children: [
+                      IconButton(icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20), onPressed: () => setState(() => stage = CustomerStage.menu)),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(30)),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.check_circle, color: Color(0xFF22C55E), size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(child: Text("Status: ${status.toUpperCase()}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13))),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -383,22 +433,67 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen> {
                     width: double.infinity,
                     decoration: const BoxDecoration(color: Color(0xFF1E293B), borderRadius: BorderRadius.vertical(top: Radius.circular(40))),
                     padding: const EdgeInsets.all(40),
-                    child: Column(
-                      children: [
-                        _buildTimelineStep("Order Received", "Sent to vendor", true, status != "received"),
-                        _buildTimelineStep("Preparing", "Chef is cooking your meal", status == "preparing", status == "ready" || status == "COMPLETED"),
-                        _buildTimelineStep("Ready for Pickup", "Collect from stall", status == "ready", status == "COMPLETED"),
-                        const Spacer(),
-                        ElevatedButton.icon(
-                          onPressed: () {}, icon: const Icon(Icons.phone), label: const Text("Call Vendor"),
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF43F5E), foregroundColor: Colors.white, minimumSize: const Size(double.infinity, 60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-                        ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: () {}, icon: const Icon(Icons.receipt_long), label: const Text("View Order Details"),
-                          style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white24), minimumSize: const Size(double.infinity, 60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-                        ),
-                      ],
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          _buildTimelineStep("Order Received", "Sent to vendor", true, status != "received"),
+                          _buildTimelineStep("Preparing", "Chef is cooking your meal", status == "preparing", status == "ready" || status == "COMPLETED"),
+                          _buildTimelineStep("Ready for Pickup", "Collect from stall", status == "ready", status == "COMPLETED"),
+                          const SizedBox(height: 24),
+                          
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(20)),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text("Order Details", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 16),
+                                ...items.map((item) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text("${item['quantity']}x ${item['name']}", style: const TextStyle(color: Colors.white70)),
+                                      Text("₹${item['price'] * item['quantity']}", style: const TextStyle(color: Colors.white)),
+                                    ],
+                                  ),
+                                )),
+                                const Divider(color: Colors.white10),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text("Total", style: TextStyle(color: Colors.white60)),
+                                    Text("₹${data['totalAmount']}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          
+                          const SizedBox(height: 32),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 60,
+                            child: ElevatedButton.icon(
+                              onPressed: canRemind ? () {
+                                _startRemindTimer();
+                                FirebaseFirestore.instance.collection('orders').doc(activeOrderId).update({'remindVendor': true, 'remindAt': FieldValue.serverTimestamp()});
+                              } : null,
+                              icon: const Icon(Icons.notifications_active),
+                              label: Text(canRemind ? "Remind Vendor" : "Remind in ${remindSeconds}s"),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFF43F5E), 
+                                foregroundColor: Colors.white, 
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                disabledBackgroundColor: Colors.white10,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text("Order ID: ${activeOrderId!.substring(activeOrderId!.length - 6).toUpperCase()}", style: const TextStyle(color: Colors.white10, fontSize: 10)),
+                        ],
+                      ),
                     ),
                   ),
                 ),

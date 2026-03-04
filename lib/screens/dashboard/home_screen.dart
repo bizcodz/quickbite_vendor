@@ -158,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
       stream: FirebaseFirestore.instance
           .collection('orders')
           .where('vendorId', isEqualTo: uid)
+          .where('status', isEqualTo: 'COMPLETED') // 🔥 Only completed orders
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
@@ -202,7 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 children: [
                   Text(
-                    "\$${totalEarnings.toStringAsFixed(2)}",
+                    "₹${totalEarnings.toStringAsFixed(2)}",
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 32,
@@ -225,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _SummaryStat(
                       label: "AVG VALUE",
                       value:
-                      "\$${avgValue.toStringAsFixed(2)}"),
+                      "₹${avgValue.toStringAsFixed(2)}"),
                 ],
               ),
             ],
@@ -244,30 +245,42 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLiveOrdersSection() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-        color: Colors.white.withOpacity(0.02),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), shape: BoxShape.circle),
-            child: Icon(Icons.restaurant, color: Colors.white.withOpacity(0.2), size: 36),
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('orders')
+          .where('vendorId', isEqualTo: uid)
+          .where('status', whereIn: ['received', 'paid', 'accepted', 'preparing', 'ready'])
+          .snapshots(),
+      builder: (context, snapshot) {
+        final count = snapshot.data?.docs.length ?? 0;
+        
+        return Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: Colors.white.withOpacity(0.05)),
+            color: Colors.white.withOpacity(0.02),
           ),
-          const SizedBox(height: 16),
-          const Text("No live orders yet",
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Text("Keep the app open and stay online.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13)),
-        ],
-      ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), shape: BoxShape.circle),
+                child: Icon(Icons.restaurant, color: neonGreen.withOpacity(count > 0 ? 1.0 : 0.2), size: 36),
+              ),
+              const SizedBox(height: 16),
+              Text(count > 0 ? "$count Active Orders" : "No live orders yet",
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(count > 0 ? "Check the Orders tab to manage them." : "Keep the app open and stay online.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13)),
+            ],
+          ),
+        );
+      }
     );
   }
 }
