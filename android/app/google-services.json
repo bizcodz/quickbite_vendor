@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "490491870103",
+    "project_id": "quickbite-vendor",
+    "storage_bucket": "quickbite-vendor.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:490491870103:android:7fdbd06b485d5cde8e62d2",
+        "android_client_info": {
+          "package_name": "com.example.quickbite_vendor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNZegyxpr-XP3s8GakVGmIV5XRBCs9mfk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
